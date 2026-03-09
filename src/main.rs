@@ -1,8 +1,11 @@
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+use sha1::{Digest, Sha1};
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use flate2::read::ZlibDecoder;
 
@@ -26,12 +29,46 @@ fn main() {
             let contents = read_object(&path);
             print!("{}", String::from_utf8_lossy(&contents));
         }
+        "hash-object" => {
+            let path = &args[3]; // ignore -w for now
+            let hash = hash_object(path);
+            print!("{}", hash);
+        }
         _ => println!("unknown command: {}", args[1]),
     }
 }
 
 fn path_to_object(id: &str) -> String {
     format!(".git/objects/{}/{}", &id[0..2], &id[2..])
+}
+
+fn hash_object(path: &str) -> String {
+    match fs::read(path) {
+        Ok(contents) => {
+            let len = contents.len();
+            let header = format!("blob {}\0", len);
+            let contents: Vec<u8> = [header.as_bytes(), &contents].concat();
+
+            let mut hasher = Sha1::new();
+            hasher.update(&contents);
+            let result = hasher.finalize();
+            let hash = format!("{:x}", result).to_string();
+
+            // write the compressed object to the correct path
+            let mut e = ZlibEncoder::new(Vec::new(), Compression::default());
+            e.write_all(&contents).unwrap();
+            let compressed = e.finish().unwrap();
+            let object_path = path_to_object(&hash);
+            fs::create_dir_all(format!(".git/objects/{}", &hash[0..2])).unwrap();
+            fs::write(object_path, compressed).unwrap();
+
+            hash
+        }
+        Err(e) => {
+            eprintln!("Error reading file: {}", e);
+            String::new()
+        }
+    }
 }
 
 fn read_object(path: &str) -> Vec<u8> {
